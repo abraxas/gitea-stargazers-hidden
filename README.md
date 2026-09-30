@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="header.png" alt="Abraxas Labs — gitea-stargazers-hidden" width="100%">
+  <img src="header.png" alt="Abraxas Labs - gitea-stargazers-hidden" width="100%">
 </p>
 
 <p align="center">
@@ -14,148 +14,65 @@
 
 # gitea-stargazers-hidden
 
-**Gitea** `1.27.3` — Gitea
+**Gitea** `1.27.3` - Gitea
 
-Unpublished Gitea source finding: unauth stargazers/watchers leak limited usernames.
+Limited and private users are supposed to vanish from anonymous viewers. [`GetInfo`](https://github.com/go-gitea/gitea/blob/v1.27.3/routers/api/v1/user/user.go) already 404s them. Follower lists already apply `isUserVisibleToViewerCond` in SQL. [`GetStargazers`](https://github.com/go-gitea/gitea/blob/v1.27.3/models/repo/star.go) is a join on `star` with no visibility filter. [`ListStargazers`](https://github.com/go-gitea/gitea/blob/v1.27.3/routers/api/v1/repo/star.go) then `convert.ToUser`s the lot. [`ListSubscribers`](https://github.com/go-gitea/gitea/blob/v1.27.3/routers/api/v1/repo/subscriber.go) is the same shape for watchers.
+
+**Without logging in, a public repo's stargazers JSON names users that `GET /users/{name}` hides.**
 
 | | |
 |---|---|
-| ID | Unpublished Gitea source finding #5 (no CVE yet) |
+| ID | no CVE yet |
 | CWE | [CWE-200](https://cwe.mitre.org/data/definitions/200.html) |
 | CVSS | **Medium: 5.3** `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N` |
 | Product | [Gitea](https://github.com/go-gitea/gitea) |
-| Affected | all versions **through 1.27.3** (inclusive) |
-| Patched | vendor patch — see references |
-| Auth | unauthenticated (see source map) |
+| Affected | through **v1.27.3** (`146cc3e`) |
+| Auth | unauthenticated |
 | License | [GNU Affero GPL v3.0](LICENSE) |
-| Lab | `127.0.0.1` only · vendor/client disclosure pack, not a scanner |
+| Lab | `127.0.0.1` only |
 
----
+## What an attacker can do
 
-## Advisory (from the source map)
+Without logging in, read a public repo's stargazers and watchers and **learn usernames that `GET /users/{name}` hides**. That is recon on limited and private accounts that starred or watched something public: people who set visibility so they would not show up in search, then clicked star anyway.
 
-GetStargazers / GetWatchers omit isUserVisibleToViewerCond. Follower lists already apply the visibility condition.
+It is a username, not an email, not a private-git read, not RCE. Combined with the [Follow 204 vs 404](https://github.com/abraxas/gitea-follow-existence) oracle, you can confirm a hidden login exists even when the profile 404s.
 
----
+## How I found it
 
-## Entry
+Visibility was a theme of the 1.27.3 GHSA wave. When a product 404s a profile on purpose, the next question is which list endpoints still join `user` without that condition. Stars and watchers do.
 
-- **Method:** `GET`
-- **Path:** `/api/v1/repos/{owner}/{repo}/stargazers`
-- **Router:** Unauthenticated GET. GetStargazers / GetWatchers omit isUserVisibleToViewerCond. GET /users/{name} 404s limited users. Follower lists already filter.
-- **Notes:** Unauthenticated unpublished Gitea #5 CWE-200 v1.27.3. Witness: unauth stargazers JSON includes hidstar while unauth GET  is 404. Not eval. Not a reverse shell.
+I planted `hidstar` as limited, starred and watched a public repo, and hit the instance with no token. Unauth `GET /api/v1/users/hidstar` is **404**. Unauth stargazers JSON includes `hidstar`. Unauth watchers include `hidstar`. Unauth followers HTML does not. The profile is shy. The star table is not.
 
-### Call chain
+Wrong turns already recorded: unauth `GET /users/hidstar` returning 200 (then visibility is off entirely - lab requires 404); followers HTML listing `hidstar` (that path already applies the condition); treating a 200 on `/stargazers` with only public names as SUCCESS; a reverse shell. Theatre. The leak is the limited login in the JSON.
 
-- `limited user stars + watches public repo`
-- `unauth GET /api/v1/users/hidstar → 404`
-- `unauth GET /api/v1/repos/{owner}/{repo}/stargazers includes hidstar`
-- `unauth GET .../subscribers includes hidstar; followers web omits`
-
-### Lab preconditions
-
-- Gitea 1.27.3
-- Public repository
-- At least one limited/hidden user who starred or watched it
-
-### Witness
-
-unauth stargazers JSON includes hidstar; unauth GET  is 404
-
-### Not success
-
-- eval/base64/system payload
-- reverse shell
-- unauth GET  returning 200
-- followers web HTML listing hidstar
-
----
-
-## Patch / remediation
-
-**Do this first:** Apply the vendor patch for **Gitea**. See references.
-
-**Verify after upgrade**
-
-- Re-run `gitea-stargazers-hidden-Abraxas-Labs.py` against the patched build: the mapped witness must **not** appear.
-- Confirm the vendor advisory / changeset in the deployed tree (see references).
-- A WAF signature is delay, not a patch.
-
-**If you cannot update immediately**
-
-- Disable or isolate the affected component.
-- Hunt for the witness condition on production (new privileged users, unexpected files, injected rows — whatever this CVE's map names).
-
----
-
-## Reproduction (authorized lab)
-
-Target **only** `http://127.0.0.1:8088` (or the loopback you bound). Do not point this script at the internet.
-
-```bash
-python3 gitea-stargazers-hidden-Abraxas-Labs.py
-```
-
-Success is the **witness** above in the response body. Generic 200 HTML is not it.
-
----
-
-## Lab images
-
-Loopback stack used to reproduce. Official images unless a `Dockerfile` in this folder builds from source.
-
-- [`lab/docker-compose.yml`](lab/docker-compose.yml)
-- [`lab/Dockerfile`](lab/Dockerfile)
-- [`lab/run.sh`](lab/run.sh)
+## Lab
 
 ```bash
 cd lab
-docker compose up --force-recreate
+./run.sh
 ```
 
-Bind the vulnerable product tree next to Compose if the YAML mounts a local directory (plugin zip / source tag from the version table). Publish nothing except `127.0.0.1`.
+Target **only** `http://127.0.0.1:18133`. Compose allows `public,limited,private` visibility and leaves stars on.
 
----
+```text
+unauth-user-get status=404
+unauth-stargazers status=200 stargazer-names=['hidstar']
+unauth-watchers leak=True
+unauth-followers-web limited-in-html=False
+SUCCESS GITEA-STARGAZERS-HIDDEN
+```
+
+## The fix
+
+Apply `isUserVisibleToViewerCond` in `GetStargazers` / `GetRepoWatchers`. Unauth stargazers and watchers must omit `hidstar` the same way followers already do.
 
 ## References
 
-- [github.com/go-gitea/gitea](https://github.com/go-gitea/gitea) tag v1.27.3
-
-- Abraxas Labs: [abraxaslabs.tech](https://abraxaslabs.tech) · [github.com/abraxas](https://github.com/abraxas) · [@abraxas_null](https://x.com/abraxas_null)
-
----
-
-## Records (structured)
-
-```
-# Gitea unpublished #5 — stargazers leak hidden users
-
-CWE: CWE-200
-Severity: Medium (source review)
-
-## Description
-
-Unauthenticated `GET /repos/{owner}/{repo}/stargazers` and watchers omit `isUserVisibleToViewerCond`. A limited user who starred a public repo appears in those lists while `GET /users/{name}` is 404. Follower lists already filter.
-
-## Product
-
-Gitea 1.27.3. Lab oracle is the limited login in unauth JSON, not a shell.
-```
-
----
+- [github.com/go-gitea/gitea](https://github.com/go-gitea/gitea) tag [v1.27.3](https://github.com/go-gitea/gitea/releases/tag/v1.27.3)
+- [`star.go` router](https://github.com/go-gitea/gitea/blob/v1.27.3/routers/api/v1/repo/star.go) · [`star.go` model](https://github.com/go-gitea/gitea/blob/v1.27.3/models/repo/star.go) · [`subscriber.go`](https://github.com/go-gitea/gitea/blob/v1.27.3/routers/api/v1/repo/subscriber.go) · [`GetInfo`](https://github.com/go-gitea/gitea/blob/v1.27.3/routers/api/v1/user/user.go) · [`GetUserFollowers`](https://github.com/go-gitea/gitea/blob/v1.27.3/models/user/user.go)
+- Same tag: [gitea-follow-existence](https://github.com/abraxas/gitea-follow-existence)
+- [CWE-200](https://cwe.mitre.org/data/definitions/200.html)
 
 ## License
 
-This disclosure pack is licensed under the **GNU Affero General Public License v3.0**. See [LICENSE](LICENSE).
-
----
-
-## Disclaimer
-
-This pack is for **the vendor, the site owner, and licensed labs**. The script talks to `127.0.0.1`. Using it against systems you do not own is not authorized by Abraxas Labs. No warranty.
-
-<p align="center">
-  <a href="https://abraxaslabs.tech">abraxaslabs.tech</a> ·
-  <a href="https://github.com/abraxas">github.com/abraxas</a> ·
-  <a href="https://x.com/abraxas_null">@abraxas_null</a>
-</p>
+GNU Affero GPL v3.0. See [LICENSE](LICENSE). Loopback lab only. No warranty.
