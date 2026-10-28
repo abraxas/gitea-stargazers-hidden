@@ -13,6 +13,10 @@
   &nbsp;·&nbsp;
   <a href="https://github.com/abraxas/gitea-stargazers-hidden">gitea-stargazers-hidden</a>
 </p>
+<p align="center">
+  Write-up: <a href="https://abraxaslabs.tech/research/gitea-stargazers-hidden"><strong>https://abraxaslabs.tech/research/gitea-stargazers-hidden</strong></a>
+</p>
+
 
 # gitea-stargazers-hidden
 
